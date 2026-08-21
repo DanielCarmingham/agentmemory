@@ -7,6 +7,7 @@ import type {
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
+import { withKeyedLock } from "../state/keyed-mutex.js";
 import {
   SUMMARY_SYSTEM,
   buildSummaryPrompt,
@@ -240,6 +241,10 @@ export function registerSummarizeFunction(
       }
       const sessionId = data.sessionId.trim();
 
+      // #1203: api::summarize stays publicly reachable, so dropping the
+      // hook's duplicate POST does not by itself prevent two concurrent
+      // full-history passes over identical input. Serialize per session.
+      return withKeyedLock(`mem:summarize:${sessionId}`, async () => {
       const session = await kv.get<Session>(KV.sessions, sessionId);
       if (!session) {
         logger.warn("Session not found for summarize", {
@@ -393,6 +398,7 @@ export function registerSummarizeFunction(
         });
         return { success: false, error: msg };
       }
+      });
     },
   );
 }

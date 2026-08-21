@@ -480,3 +480,52 @@ describe("mem::summarize chunking", () => {
     expect(result.error).toBe("parse_failed");
   });
 });
+
+describe("mem::summarize concurrency", () => {
+  it("serializes concurrent runs for the same session (#1203)", async () => {
+    const kv = mockKV();
+    await kv.set("sessions", "s1", {
+      id: "s1",
+      project: "p",
+      cwd: "/tmp",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 1,
+    } as Session);
+    await kv.set("obs:s1", "o1", {
+      id: "o1",
+      sessionId: "s1",
+      timestamp: new Date().toISOString(),
+      type: "other",
+      title: "t",
+      facts: [],
+      narrative: "n",
+      concepts: [],
+      files: [],
+      importance: 5,
+      confidence: 0.3,
+    } as CompressedObservation);
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const provider: MemoryProvider = {
+      name: "test",
+      compress: async () => "",
+      summarize: async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 20));
+        inFlight--;
+        return "<summary><title>T</title><narrative>N</narrative></summary>";
+      },
+    } as unknown as MemoryProvider;
+
+    const sdk = mockSdk();
+    registerSummarizeFunction(sdk as never, kv as never, provider);
+    const fn = sdk.functions.get("mem::summarize")!;
+
+    await Promise.all([fn({ sessionId: "s1" }), fn({ sessionId: "s1" })]);
+
+    expect(maxInFlight).toBe(1);
+  });
+});
