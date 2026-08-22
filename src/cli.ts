@@ -2892,7 +2892,10 @@ async function seedDemoSession(
     }
   }
 
-  await postJsonStrict(`${base}/agentmemory/session/end`, { sessionId: session.id });
+  // #745: this is a genuine one-shot session end (demo seeding), not a
+  // per-turn Stop call, so it must set final:true or the demo session would
+  // sit "active" forever and could trip the stale-session diagnostic.
+  await postJsonStrict(`${base}/agentmemory/session/end`, { sessionId: session.id, final: true });
   return stored;
 }
 
