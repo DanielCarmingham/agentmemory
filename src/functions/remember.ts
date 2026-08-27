@@ -291,6 +291,9 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           deletedObservationIds.push(obsId);
           deleted++;
         }
+        // The session survives, so the whole-session branch below never
+        // runs for this path.
+        await deleteSummaryChunks(kv, data.sessionId);
       }
 
       if (

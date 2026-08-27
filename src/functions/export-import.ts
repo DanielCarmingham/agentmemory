@@ -32,6 +32,7 @@ import { StateKV } from "../state/kv.js";
 import { VERSION } from "../version.js";
 import { recordAudit } from "./audit.js";
 import { indexRecords } from "./search.js";
+import { deleteSummaryChunks } from "./summarize.js";
 import { resetLessonIndex } from "./lessons.js";
 import { logger } from "../logger.js";
 
@@ -317,6 +318,8 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           for (const o of obs) {
             obsDeletes.push({ sessionId: session.id, obsId: o.id });
           }
+          // The session row is gone, so no later pass can find this cache.
+          await deleteSummaryChunks(kv, session.id);
         });
         await runChunked(obsDeletes, (d) =>
           kv.delete(KV.observations(d.sessionId), d.obsId),

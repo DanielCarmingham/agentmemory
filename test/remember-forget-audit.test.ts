@@ -272,4 +272,29 @@ describe("mem::forget search-index cleanup", () => {
 
     expect(persistence.save).toHaveBeenCalled();
   });
+
+  it("reclaims the chunk cache when specific observationIds are forgotten", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerRememberFunction(sdk as never, kv as never);
+
+    await kv.set("mem:sessions", "sess_2", { id: "sess_2" });
+    await kv.set("mem:obs:sess_2", "obs_a", { id: "obs_a" });
+    await kv.set("mem:obs:sess_2", "obs_b", { id: "obs_b" });
+    await kv.set("mem:summary-chunks:sess_2", "chk_a", {
+      chunkKey: "chk_a",
+      partial: { title: "cached partial" },
+    });
+
+    await sdk.trigger({
+      function_id: "mem::forget",
+      payload: { sessionId: "sess_2", observationIds: ["obs_a"] },
+    });
+
+    // The session and its remaining observation survive; only the cache
+    // invalidated by the partial delete is reclaimed.
+    expect(await kv.get("mem:sessions", "sess_2")).not.toBeNull();
+    expect(await kv.get("mem:obs:sess_2", "obs_b")).not.toBeNull();
+    expect(await kv.list("mem:summary-chunks:sess_2")).toHaveLength(0);
+  });
 });
