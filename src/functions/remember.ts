@@ -9,6 +9,7 @@ import { recordAudit } from "./audit.js";
 import { getSearchIndex, isMemoryIndexReady, vectorIndexAddGuarded, vectorIndexRemove, flushIndexSave } from "./search.js";
 import { getAgentId } from "../config.js";
 import { logger } from "../logger.js";
+import { deleteSummaryChunks } from "./summarize.js";
 
 // Slicing by UTF-16 code unit can cut an astral character (emoji, some CJK
 // extensions) mid surrogate pair, leaving a lone high surrogate that renders
@@ -313,6 +314,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
         }
         await kv.delete(KV.sessions, data.sessionId);
         await kv.delete(KV.summaries, data.sessionId);
+        await deleteSummaryChunks(kv, data.sessionId);
         deletedSession = true;
         deleted += 2;
       }

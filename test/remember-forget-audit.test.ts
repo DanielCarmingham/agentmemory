@@ -109,6 +109,36 @@ describe("mem::forget audit coverage (issue #125)", () => {
     expect(row.details.deleted).toBe(4);
   });
 
+  // #1131 review finding 2: KV.summaryChunks is introduced by
+  // mem::summarize and must be reclaimed wherever a session's
+  // KV.observations/KV.summaries are already reclaimed, or the per-chunk
+  // cache scope outlives the session it belongs to.
+  it("clears the per-chunk summary cache when an entire session is forgotten (#1131)", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerRememberFunction(sdk as never, kv as never);
+
+    await kv.set("mem:sessions", "sess_1", { id: "sess_1" });
+    await kv.set("mem:summaries", "sess_1", { id: "sess_1" });
+    await kv.set("mem:obs:sess_1", "obs_a", { id: "obs_a" });
+    await kv.set("mem:summary-chunks:sess_1", "chk_aaaaaaaaaaaaaaaa", {
+      chunkKey: "chk_aaaaaaaaaaaaaaaa",
+      partial: { title: "t" },
+    });
+    await kv.set("mem:summary-chunks:sess_1", "chk_bbbbbbbbbbbbbbbb", {
+      chunkKey: "chk_bbbbbbbbbbbbbbbb",
+      partial: { title: "t2" },
+    });
+
+    await sdk.trigger({
+      function_id: "mem::forget",
+      payload: { sessionId: "sess_1" },
+    });
+
+    const remaining = await kv.list("mem:summary-chunks:sess_1");
+    expect(remaining).toHaveLength(0);
+  });
+
   it("does not emit an audit row when nothing is deleted", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

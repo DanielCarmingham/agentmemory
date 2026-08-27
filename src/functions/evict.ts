@@ -12,6 +12,7 @@ import { isConsolidationEnabled } from "../config.js";
 import { recordAudit } from "./audit.js";
 import { deleteAccessLog } from "./access-tracker.js";
 import { logger } from "../logger.js";
+import { deleteSummaryChunks } from "./summarize.js";
 
 interface EvictionConfig {
   staleSessionDays: number;
@@ -180,6 +181,10 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
               });
               continue;
             }
+            // Reached only for sessions with no KV.summaries entry, which
+            // can still hold chunk partials from a run whose final reduce
+            // failed after the per-chunk calls succeeded.
+            await deleteSummaryChunks(kv, session.id);
             await recordAudit(kv, "delete", "mem::evict", [session.id], {
               resource: "session",
               reason: recovered
@@ -194,6 +199,12 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
       if (!dryRun && recoveredStaleSessions > 0) {
         await runRecoveredSessionConsolidation(sdk);
       }
+
+      // Evicting one observation shifts every downstream chunk boundary,
+      // orphaning the session's whole chunk cache. Collect sessions here
+      // and flush each once after both loops, rather than per evicted
+      // observation.
+      const touchedSessionIds = new Set<string>();
 
       const projectObs = new Map<string, CompressedObservation[]>();
       for (const session of sessions) {
@@ -225,6 +236,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
                 });
                 continue;
               }
+              touchedSessionIds.add(session.id);
               if (o.imageData) await decrementImageRef(kv, sdk, o.imageData);
               if (o.imageRef && o.imageRef !== o.imageData) await decrementImageRef(kv, sdk, o.imageRef);
               await recordAudit(kv, "delete", "mem::evict", [o.id], {
@@ -268,6 +280,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
                 });
                 continue;
               }
+              touchedSessionIds.add(o.sessionId);
               if (o.imageData) await decrementImageRef(kv, sdk, o.imageData);
               if (o.imageRef && o.imageRef !== o.imageData) await decrementImageRef(kv, sdk, o.imageRef);
               await recordAudit(kv, "delete", "mem::evict", [o.id], {
@@ -279,6 +292,14 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
             }
           }
         }
+      }
+
+      // Empty on a dryRun pass, so this needs no separate dryRun guard.
+      // Kept sequential rather than Promise.all: a sweep can touch
+      // hundreds of sessions, and the file-based KV adapter stalls under
+      // that much concurrent fan-out (upstream #1127).
+      for (const sessionId of touchedSessionIds) {
+        await deleteSummaryChunks(kv, sessionId);
       }
 
       const memories = await kv.list<Memory>(KV.memories).catch(() => []);
