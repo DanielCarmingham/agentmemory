@@ -13,6 +13,7 @@ import { recordAudit } from "./audit.js";
 import { deleteAccessLog } from "./access-tracker.js";
 import { logger } from "../logger.js";
 import { deleteSummaryChunks } from "./summarize.js";
+import { withKeyedLock, sessionWriteLockKey } from "../state/keyed-mutex.js";
 
 interface EvictionConfig {
   staleSessionDays: number;
@@ -171,7 +172,19 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
             }
 
             try {
-              await kv.delete(KV.sessions, session.id);
+              // Shared with mem::summarize's write step: a run that
+              // already passed its session-exists check would otherwise
+              // write these rows back with nothing left to reclaim them.
+              // The KV.summaries delete covers the ordering where that run
+              // wins the lock — this branch is otherwise reached only for
+              // sessions with no summary, though they can still hold chunk
+              // partials from a run whose final reduce failed after the
+              // per-chunk calls succeeded.
+              await withKeyedLock(sessionWriteLockKey(session.id), async () => {
+                await kv.delete(KV.sessions, session.id);
+                await kv.delete(KV.summaries, session.id);
+                await deleteSummaryChunks(kv, session.id);
+              });
               stats.staleSessions++;
             } catch (err) {
               logger.warn("Eviction delete failed", {
@@ -181,10 +194,6 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
               });
               continue;
             }
-            // Reached only for sessions with no KV.summaries entry, which
-            // can still hold chunk partials from a run whose final reduce
-            // failed after the per-chunk calls succeeded.
-            await deleteSummaryChunks(kv, session.id);
             await recordAudit(kv, "delete", "mem::evict", [session.id], {
               resource: "session",
               reason: recovered

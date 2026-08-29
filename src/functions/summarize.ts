@@ -8,7 +8,7 @@ import type {
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
-import { withKeyedLock } from "../state/keyed-mutex.js";
+import { withKeyedLock, sessionWriteLockKey } from "../state/keyed-mutex.js";
 import {
   SUMMARY_SYSTEM,
   buildSummaryPrompt,
@@ -510,7 +510,32 @@ export function registerSummarizeFunction(
         const qualityScore = scoreSummary(summaryForValidation);
 
         summary.sourceFingerprint = fingerprint;
-        await kv.set(KV.summaries, sessionId, summary);
+        const wrote = await withKeyedLock(
+          sessionWriteLockKey(sessionId),
+          async () => {
+            // The provider call above runs for seconds while holding only
+            // the summarize lock, which deletion paths do not take. A
+            // whole-session delete landing in that window would otherwise
+            // be undone here, and nothing reclaims the result: every later
+            // run bails at session_not_found before reaching any cleanup.
+            if (!(await kv.get<Session>(KV.sessions, sessionId))) {
+              await deleteSummaryChunks(kv, sessionId);
+              return false;
+            }
+            await kv.set(KV.summaries, sessionId, summary);
+            return true;
+          },
+        );
+        if (!wrote) {
+          const latencyMs = Date.now() - startMs;
+          if (metricsStore) {
+            await metricsStore.record("mem::summarize", latencyMs, false);
+          }
+          logger.info("Summarize discarded — session deleted mid-run", {
+            sessionId,
+          });
+          return { success: false, error: "session_deleted" };
+        }
         await safeAudit(kv, "compress", "mem::summarize", [sessionId], {
           title: summary.title,
           observationCount: compressed.length,

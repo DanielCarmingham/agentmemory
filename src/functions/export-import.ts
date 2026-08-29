@@ -33,6 +33,7 @@ import { VERSION } from "../version.js";
 import { recordAudit } from "./audit.js";
 import { indexRecords } from "./search.js";
 import { deleteSummaryChunks } from "./summarize.js";
+import { withKeyedLock, sessionWriteLockKey } from "../state/keyed-mutex.js";
 import { resetLessonIndex } from "./lessons.js";
 import { logger } from "../logger.js";
 
@@ -311,15 +312,21 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         // multiplies in-flight deletes to chunk-size squared.
         const obsDeletes: Array<{ sessionId: string; obsId: string }> = [];
         await runChunked(existing, async (session) => {
-          await kv.delete(KV.sessions, session.id);
+          // Shared with mem::summarize's write step: a run that already
+          // passed its session-exists check would otherwise write the
+          // session's rows back behind this wipe. The KV.summaries sweep
+          // below lists after this pass, so it still catches a summary
+          // written by a run that won the lock.
+          await withKeyedLock(sessionWriteLockKey(session.id), async () => {
+            await kv.delete(KV.sessions, session.id);
+            await deleteSummaryChunks(kv, session.id);
+          });
           const obs = await kv
             .list<CompressedObservation>(KV.observations(session.id))
             .catch(() => []);
           for (const o of obs) {
             obsDeletes.push({ sessionId: session.id, obsId: o.id });
           }
-          // The session row is gone, so no later pass can find this cache.
-          await deleteSummaryChunks(kv, session.id);
         });
         await runChunked(obsDeletes, (d) =>
           kv.delete(KV.observations(d.sessionId), d.obsId),

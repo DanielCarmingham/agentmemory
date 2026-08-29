@@ -1009,3 +1009,44 @@ describe("mem::summarize chunk memoization", () => {
     expect(calls).toBe(2);
   });
 });
+
+describe("mem::summarize session deleted mid-run", () => {
+  async function tick(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it("writes no summary when the session is deleted during the provider call", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = 0;
+    const provider = {
+      name: "test",
+      compress: async () => "",
+      summarize: async () => {
+        entered += 1;
+        await gate;
+        return summaryXml({ title: "orphan" });
+      },
+    } as unknown as MemoryProvider;
+
+    const { handler, kv } = await setupHandler({
+      sessionId: "s_del",
+      obsCount: 3,
+      provider,
+    });
+
+    const run = handler({ sessionId: "s_del" });
+    while (entered === 0) await tick();
+
+    await kv.delete("sessions", "s_del");
+    await kv.delete("summaries", "s_del");
+
+    release();
+    const result = await run;
+
+    expect(kv.store.get("summaries")?.get("s_del")).toBeUndefined();
+    expect(result.success).toBe(false);
+  });
+});

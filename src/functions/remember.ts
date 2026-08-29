@@ -2,7 +2,7 @@ import { TriggerAction, type ISdk } from "iii-sdk";
 import type { Memory } from "../types.js";
 import { KV, generateId, jaccardSimilarity } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
-import { withKeyedLock } from "../state/keyed-mutex.js";
+import { withKeyedLock, sessionWriteLockKey } from "../state/keyed-mutex.js";
 import { memoryToObservation } from "../state/memory-utils.js";
 import { deleteAccessLog } from "./access-tracker.js";
 import { recordAudit } from "./audit.js";
@@ -315,9 +315,16 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           deletedObservationIds.push(obs.id);
           deleted++;
         }
-        await kv.delete(KV.sessions, data.sessionId);
-        await kv.delete(KV.summaries, data.sessionId);
-        await deleteSummaryChunks(kv, data.sessionId);
+        // Taken against an in-flight mem::summarize, which re-checks the
+        // session before writing: without the shared key a run that passed
+        // that check writes its rows back after this deletes them, and no
+        // later run reclaims them.
+        const sessionId = data.sessionId;
+        await withKeyedLock(sessionWriteLockKey(sessionId), async () => {
+          await kv.delete(KV.sessions, sessionId);
+          await kv.delete(KV.summaries, sessionId);
+          await deleteSummaryChunks(kv, sessionId);
+        });
         deletedSession = true;
         deleted += 2;
       }
