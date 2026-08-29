@@ -1,5 +1,6 @@
 import type { EmbeddingProvider } from "../../types.js";
 import { detectEmbeddingProvider, getEnvVar } from "../../config.js";
+import { bootLog, logger } from "../../logger.js";
 import { GeminiEmbeddingProvider } from "./gemini.js";
 import { OpenAIEmbeddingProvider } from "./openai.js";
 import { VoyageEmbeddingProvider } from "./voyage.js";
@@ -46,6 +47,63 @@ export function createEmbeddingProvider(): EmbeddingProvider | null {
       return withDimensionGuard(new LocalEmbeddingProvider());
     default:
       return null;
+  }
+}
+
+// #931-class fix: the worker's boot-time embedding probe (src/index.ts)
+// used to report its result only through `bootLog`, which reaches
+// stderr solely under --verbose (see the comment above `bootLog` in
+// src/logger.ts). A daemon (launchd/systemd) start never sets that, so
+// on a live deployment a broken embedding runtime never printed a
+// single line - the corpus reached 201,102 observations at 1.1% vector
+// coverage before anyone noticed. `logger.info`/`logger.warn` reach the
+// daemon log unconditionally, so this reports through `logger` first,
+// with `bootLog` kept alongside so --verbose still shows it in the
+// compact boot summary the CLI builds from the buffer.
+//
+// Exported (rather than left as an inline .then()/.catch() at the call
+// site in src/index.ts) so tests can call and await it directly - the
+// caller dispatches this fire-and-forget, so there is no other way to
+// observe its settlement from outside.
+export async function reportEmbeddingProbeResult(
+  embeddingProvider: EmbeddingProvider,
+): Promise<void> {
+  try {
+    // Probe embedBatch, not embed: the indexing path
+    // (vectorIndexAddBatchGuarded in search.ts) calls embedBatch, and a
+    // provider can implement the two differently. Verify the shape too -
+    // the guard drops any vector whose length differs from `dimensions`,
+    // so a wrong-shape provider would pass a bare probe call yet index
+    // nothing.
+    const vectors = await embeddingProvider.embedBatch([
+      "agentmemory boot probe",
+    ]);
+    if (
+      vectors.length !== 1 ||
+      vectors[0].length !== embeddingProvider.dimensions
+    ) {
+      throw new Error(
+        `embedBatch returned ${vectors.length} vector(s) of length ` +
+          `${vectors[0]?.length ?? 0}, expected 1 of length ${embeddingProvider.dimensions}`,
+      );
+    }
+    logger.info("Embedding provider verified", {
+      provider: embeddingProvider.name,
+      dimensions: embeddingProvider.dimensions,
+    });
+    bootLog(`Embeddings: ${embeddingProvider.name} (${embeddingProvider.dimensions}d)`);
+  } catch (err) {
+    logger.warn(
+      "Embedding provider failed boot probe - semantic search degrades to BM25-only",
+      {
+        provider: embeddingProvider.name,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+    bootLog(
+      `Embeddings: ${embeddingProvider.name} FAILED - semantic search will be BM25-only. ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
   }
 }
 

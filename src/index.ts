@@ -19,6 +19,7 @@ import {
   createFallbackProvider,
   createEmbeddingProvider,
   createImageEmbeddingProvider,
+  reportEmbeddingProbeResult,
 } from "./providers/index.js";
 import { StateKV } from "./state/kv.js";
 import { KV } from "./state/schema.js";
@@ -101,7 +102,7 @@ import { DedupMap } from "./functions/dedup.js";
 import { registerHealthMonitor } from "./health/monitor.js";
 import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
-import { bootLog } from "./logger.js";
+import { bootLog, logger } from "./logger.js";
 import { runtimeMetadataPath } from "./runtime-paths.js";
 import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
@@ -549,6 +550,45 @@ async function main() {
     secret,
     config.restPort,
   );
+
+  // #931: a broken or absent embedding runtime previously surfaced only as
+  // a per-observation logger.warn inside vectorIndexAddGuarded, so a corpus
+  // could reach six figures at ~1% vector coverage with no visible signal.
+  // Resolve and warm the provider once at boot and say what happened.
+  //
+  // Fire-and-forget: process.on("SIGINT"/"SIGTERM", shutdown) is not
+  // registered until further down this function; awaiting the probe here
+  // would delay that registration by however long the first embed call
+  // takes. A cold local-model load can mean downloading tens of MB, so on
+  // a slow or rate-limited link that could be a long wait - if a rolling
+  // deploy's SIGTERM lands in that window, there is no shutdown handler
+  // installed yet and the process dies without healthMonitor.stop()/
+  // indexPersistence.save()/sdk.shutdown() running, losing the persisted
+  // search index. Detaching this also means there is no reason to bound it
+  // with a timeout: a slow cold load simply reports later instead of being
+  // killed off and logged as a spurious failure for a provider that would
+  // otherwise have worked.
+  if (!embeddingProvider) {
+    // createEmbeddingProvider() returns null in two cases:
+    // EMBEDDING_PROVIDER=none (a deliberate opt-out) and an unrecognized
+    // value (a typo - createEmbeddingProvider's switch falls to
+    // `default: return null` for anything that isn't a known provider
+    // name). Printing a hardcoded "EMBEDDING_PROVIDER=none" here would
+    // blame the opt-out even when the user never set it, so print the
+    // value actually resolved instead.
+    //
+    // logger.info alongside bootLog: this is a deliberate opt-out (or a
+    // typo), not a failure, so info is the right level - but it still
+    // needs to reach the daemon log, which bootLog alone does not.
+    logger.info("Embeddings disabled", {
+      provider: embeddingConfig.provider ?? "none",
+    });
+    bootLog(
+      `Embeddings: disabled (EMBEDDING_PROVIDER=${embeddingConfig.provider ?? "none"})`,
+    );
+  } else {
+    void reportEmbeddingProbeResult(embeddingProvider);
+  }
 
   const autoForgetIntervalMs = parseInt(process.env.AUTO_FORGET_INTERVAL_MS || "3600000", 10);
   const consolidationIntervalMs = parseInt(process.env.CONSOLIDATION_INTERVAL_MS || "7200000", 10);
