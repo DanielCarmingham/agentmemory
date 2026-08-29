@@ -12,6 +12,7 @@ import { isConsolidationEnabled } from "../config.js";
 import { recordAudit } from "./audit.js";
 import { deleteAccessLog } from "./access-tracker.js";
 import { logger } from "../logger.js";
+import { deleteGraphExtractMarks } from "./graph.js";
 
 interface EvictionConfig {
   staleSessionDays: number;
@@ -180,6 +181,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
               });
               continue;
             }
+            await deleteGraphExtractMarks(kv, session.id);
             await recordAudit(kv, "delete", "mem::evict", [session.id], {
               resource: "session",
               reason: recovered
@@ -194,6 +196,11 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
       if (!dryRun && recoveredStaleSessions > 0) {
         await runRecoveredSessionConsolidation(sdk);
       }
+
+      // Removing an observation stales the session's graph-extract mark
+      // (see deleteGraphExtractMarks); flush once per touched session
+      // after both eviction loops, not per evicted observation.
+      const touchedSessionIds = new Set<string>();
 
       const projectObs = new Map<string, CompressedObservation[]>();
       for (const session of sessions) {
@@ -225,6 +232,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
                 });
                 continue;
               }
+              touchedSessionIds.add(session.id);
               if (o.imageData) await decrementImageRef(kv, sdk, o.imageData);
               if (o.imageRef && o.imageRef !== o.imageData) await decrementImageRef(kv, sdk, o.imageRef);
               await recordAudit(kv, "delete", "mem::evict", [o.id], {
@@ -268,6 +276,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
                 });
                 continue;
               }
+              touchedSessionIds.add(o.sessionId);
               if (o.imageData) await decrementImageRef(kv, sdk, o.imageData);
               if (o.imageRef && o.imageRef !== o.imageData) await decrementImageRef(kv, sdk, o.imageRef);
               await recordAudit(kv, "delete", "mem::evict", [o.id], {
@@ -279,6 +288,11 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
             }
           }
         }
+      }
+
+      // Empty on a dryRun pass, so no dryRun guard is needed.
+      for (const sessionId of touchedSessionIds) {
+        await deleteGraphExtractMarks(kv, sessionId);
       }
 
       const memories = await kv.list<Memory>(KV.memories).catch(() => []);
