@@ -315,10 +315,6 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           deletedObservationIds.push(obs.id);
           deleted++;
         }
-        // Taken against an in-flight mem::summarize, which re-checks the
-        // session before writing: without the shared key a run that passed
-        // that check writes its rows back after this deletes them, and no
-        // later run reclaims them.
         const sessionId = data.sessionId;
         await withKeyedLock(sessionWriteLockKey(sessionId), async () => {
           await kv.delete(KV.sessions, sessionId);

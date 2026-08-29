@@ -312,11 +312,9 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         // multiplies in-flight deletes to chunk-size squared.
         const obsDeletes: Array<{ sessionId: string; obsId: string }> = [];
         await runChunked(existing, async (session) => {
-          // Shared with mem::summarize's write step: a run that already
-          // passed its session-exists check would otherwise write the
-          // session's rows back behind this wipe. The KV.summaries sweep
-          // below lists after this pass, so it still catches a summary
-          // written by a run that won the lock.
+          // No KV.summaries delete here: the sweep below lists after this
+          // pass, so it catches a summary written by a run that won the
+          // lock.
           await withKeyedLock(sessionWriteLockKey(session.id), async () => {
             await kv.delete(KV.sessions, session.id);
             await deleteSummaryChunks(kv, session.id);

@@ -513,11 +513,8 @@ export function registerSummarizeFunction(
         const wrote = await withKeyedLock(
           sessionWriteLockKey(sessionId),
           async () => {
-            // The provider call above runs for seconds while holding only
-            // the summarize lock, which deletion paths do not take. A
-            // whole-session delete landing in that window would otherwise
-            // be undone here, and nothing reclaims the result: every later
-            // run bails at session_not_found before reaching any cleanup.
+            // Not redundant with the check on entry: the provider call
+            // between them runs for seconds, and a delete can land there.
             if (!(await kv.get<Session>(KV.sessions, sessionId))) {
               await deleteSummaryChunks(kv, sessionId);
               return false;

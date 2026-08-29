@@ -172,14 +172,9 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
             }
 
             try {
-              // Shared with mem::summarize's write step: a run that
-              // already passed its session-exists check would otherwise
-              // write these rows back with nothing left to reclaim them.
-              // The KV.summaries delete covers the ordering where that run
-              // wins the lock — this branch is otherwise reached only for
-              // sessions with no summary, though they can still hold chunk
-              // partials from a run whose final reduce failed after the
-              // per-chunk calls succeeded.
+              // The KV.summaries delete is not dead code: this branch is
+              // reached only for sessions with no summary, but a summarize
+              // run that wins the lock leaves one behind.
               await withKeyedLock(sessionWriteLockKey(session.id), async () => {
                 await kv.delete(KV.sessions, session.id);
                 await kv.delete(KV.summaries, session.id);

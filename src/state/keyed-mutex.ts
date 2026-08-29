@@ -17,10 +17,12 @@ export function withKeyedLock<T>(
   return next;
 }
 
-// mem::summarize holds its own per-session lock across the provider call,
-// which is far too coarse for a deletion to wait on. This narrower key
-// covers only the summary-row write, so deletion paths serialize against
-// that write without blocking behind an LLM round trip.
+// Held by mem::summarize over its summary-row write and by every path
+// that deletes a whole session: unshared, a run that already passed its
+// session-exists check writes the rows back after a delete, and every
+// later run bails at session_not_found before reaching any cleanup.
+// Separate from mem::summarize's own lock, which spans the provider call
+// and would park a user-initiated mem::forget behind an LLM round trip.
 export function sessionWriteLockKey(sessionId: string): string {
   return `mem:session-write:${sessionId}`;
 }
