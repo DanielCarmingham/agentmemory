@@ -271,6 +271,9 @@ export function detectEmbeddingProvider(
 ): string | null {
   const source = env ?? getMergedEnv();
   const forced = source["EMBEDDING_PROVIDER"];
+  // #395: an explicit opt-out has to stay reachable now that local is
+  // the fallback rather than null.
+  if (forced === "none") return null;
   if (forced) return forced;
 
   if (source["GEMINI_API_KEY"]) return "gemini";
@@ -278,7 +281,13 @@ export function detectEmbeddingProvider(
   if (source["VOYAGE_API_KEY"]) return "voyage";
   if (source["COHERE_API_KEY"]) return "cohere";
   if (source["OPENROUTER_API_KEY"]) return "openrouter";
-  return null;
+  // #395/#931: returning null here left currentEmbeddingProvider unset,
+  // so vectorIndexAddGuarded and indexRecords silently no-opped for
+  // every observation and semantic search returned zero hits forever.
+  // The local provider needs no key; its optional @huggingface/transformers
+  // dependency resolves lazily on first use, so a missing package surfaces
+  // as a per-write warning from the vector-index guards, not a boot error.
+  return "local";
 }
 
 export function loadClaudeBridgeConfig(): ClaudeBridgeConfig {
