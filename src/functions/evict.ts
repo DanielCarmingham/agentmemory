@@ -11,7 +11,7 @@ import { StateKV } from "../state/kv.js";
 import { isConsolidationEnabled } from "../config.js";
 import { recordAudit } from "./audit.js";
 import { deleteAccessLog } from "./access-tracker.js";
-import { logger } from "../logger.js";
+import { bootLog, logger } from "../logger.js";
 
 interface EvictionConfig {
   staleSessionDays: number;
@@ -103,6 +103,21 @@ async function runRecoveredSessionConsolidation(sdk: ISdk): Promise<void> {
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+// #931-class fix: the worker (src/index.ts) used to confirm the
+// scheduled eviction sweep only via `bootLog`, which reaches stderr
+// solely under --verbose (see the comment above `bootLog` in
+// src/logger.ts). A daemon (launchd/systemd) start never sets that, so
+// an operator got no signal in the daemon log that a destructive
+// 6-hourly sweep had just been armed. `logger.info` reaches the daemon
+// log unconditionally, so this reports through `logger` first, with
+// `bootLog` kept alongside so --verbose still shows it in the compact
+// boot summary the CLI builds from the buffer.
+export function reportEvictionScheduled(intervalMs: number): void {
+  const intervalMinutes = intervalMs / 60000;
+  logger.info("Eviction sweep scheduled", { intervalMinutes });
+  bootLog(`Eviction: enabled (every ${intervalMinutes}m)`);
 }
 
 export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
