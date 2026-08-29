@@ -107,7 +107,9 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     if (isReflectEnabled()) {
       fireVoid("mem::slot-reflect", { sessionId: data.sessionId });
     }
-    // Unconditional: mem::graph-extract gates its LLM pass internally.
+    // Unconditional: mem::graph-extract now also gates on a fingerprint of
+    // the observation set, so a Stop whose set is unchanged short-circuits
+    // before the heuristic/LLM pass instead of re-extracting the corpus.
     try {
       const observations = await kv.list<CompressedObservation>(
         KV.observations(data.sessionId),
