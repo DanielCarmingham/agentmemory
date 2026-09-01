@@ -269,6 +269,57 @@ describe("Graph Functions", () => {
     expect(mockProvider.compress.mock.calls.length).toBe(2);
   });
 
+  it("re-runs on a same-length narrative rewrite (#1063)", async () => {
+    await sdk.trigger("mem::graph-extract", { observations: [testObs] });
+
+    const rewritten: CompressedObservation = {
+      ...testObs,
+      narrative: "x".repeat((testObs.narrative ?? "").length),
+    };
+    await sdk.trigger("mem::graph-extract", { observations: [rewritten] });
+
+    expect(mockProvider.compress.mock.calls.length).toBe(2);
+  });
+
+  it("re-runs when only concepts change (#1063)", async () => {
+    await sdk.trigger("mem::graph-extract", { observations: [testObs] });
+
+    // extractGraphHeuristics builds concept nodes straight from this
+    // field, so a change here changes the graph even though title and
+    // narrative are byte-identical.
+    const retagged: CompressedObservation = {
+      ...testObs,
+      concepts: [...(testObs.concepts ?? []), "newly-tagged-concept"],
+    };
+    await sdk.trigger("mem::graph-extract", { observations: [retagged] });
+
+    expect(mockProvider.compress.mock.calls.length).toBe(2);
+  });
+
+  it("re-runs when only files change (#1063)", async () => {
+    await sdk.trigger("mem::graph-extract", { observations: [testObs] });
+
+    const remapped: CompressedObservation = {
+      ...testObs,
+      files: [...(testObs.files ?? []), "src/newly/touched.ts"],
+    };
+    await sdk.trigger("mem::graph-extract", { observations: [remapped] });
+
+    expect(mockProvider.compress.mock.calls.length).toBe(2);
+  });
+
+  it("re-runs when only type changes (#1063)", async () => {
+    await sdk.trigger("mem::graph-extract", { observations: [testObs] });
+
+    const retyped: CompressedObservation = {
+      ...testObs,
+      type: testObs.type === "decision" ? "discovery" : "decision",
+    };
+    await sdk.trigger("mem::graph-extract", { observations: [retyped] });
+
+    expect(mockProvider.compress.mock.calls.length).toBe(2);
+  });
+
   it("treats a kv.list-permuted but otherwise identical set as unchanged (#1063)", async () => {
     const obs2: CompressedObservation = { ...testObs, id: "obs_2" };
 
@@ -351,6 +402,26 @@ describe("Graph Functions", () => {
 
     expect(second.skipped).toBe("unchanged");
     expect(mockProvider.compress.mock.calls.length).toBe(1);
+  });
+
+  it("audits the clean zero-yield extraction that produced the mark (#1063)", async () => {
+    mockProvider.compress.mockResolvedValueOnce(
+      "<entities></entities><relationships></relationships>",
+    );
+
+    await sdk.trigger("mem::graph-extract", { observations: [testObs] });
+
+    const auditRows = await kv.list<{
+      functionId: string;
+      targetIds: string[];
+      details: Record<string, unknown>;
+    }>("mem:audit");
+    const row = auditRows.find((r) => r.functionId === "mem::graph-extract");
+
+    expect(row).toBeDefined();
+    expect(row!.targetIds).toContain(testObs.id);
+    expect(row!.details.nodesExtracted).toBe(0);
+    expect(row!.details.edgesExtracted).toBe(0);
   });
 
   // No LLM pass was attempted, so it cannot have failed - a

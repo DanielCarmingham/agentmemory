@@ -64,7 +64,7 @@ async function recoverStaleSession(
       function_id: "event::session::stopped",
       // Suppress the per-session consolidation fan-out: eviction runs a
       // single corpus-wide consolidation pass after all recoveries instead.
-      payload: { sessionId, skipConsolidation: true },
+      payload: { sessionId, skipConsolidation: true, awaitGraphExtract: true },
     });
     if (!isValidRecoveryResult(result)) {
       logger.warn("Stale session recovery failed", {
@@ -290,7 +290,10 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
-      // Empty on a dryRun pass, so no dryRun guard is needed.
+      // Empty on a dryRun pass, so no dryRun guard is needed. Kept
+      // sequential rather than Promise.all: a sweep can touch hundreds of
+      // sessions, and the file-based KV adapter stalls under that much
+      // concurrent fan-out (upstream #1127).
       for (const sessionId of touchedSessionIds) {
         await deleteGraphExtractMarks(kv, sessionId);
       }

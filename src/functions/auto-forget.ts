@@ -194,7 +194,10 @@ export function registerAutoForgetFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
-      // Empty on a dryRun pass, so no dryRun guard is needed.
+      // Empty on a dryRun pass, so no dryRun guard is needed. Kept
+      // sequential rather than Promise.all: this runs hourly across every
+      // session, and the file-based KV adapter stalls under that much
+      // concurrent fan-out (upstream #1127).
       for (const sessionId of touchedSessionIds) {
         await deleteGraphExtractMarks(kv, sessionId);
       }

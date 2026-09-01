@@ -133,9 +133,15 @@ describe("mem::evict stale sessions", () => {
 
     registerEvictFunction(sdk as never, kv as never);
     sdk.registerFunction("event::session::stopped", async (payload) => {
-      // Recovery must pass skipConsolidation so the per-session fan-out is
-      // suppressed (evict runs a single corpus-wide pass afterwards).
-      expect(payload).toEqual({ sessionId, skipConsolidation: true });
+      // skipConsolidation suppresses the per-session fan-out (evict runs a
+      // single corpus-wide pass afterwards). awaitGraphExtract makes the
+      // handler wait for extraction, so it cannot write its mark after the
+      // delete below orphans it.
+      expect(payload).toEqual({
+        sessionId,
+        skipConsolidation: true,
+        awaitGraphExtract: true,
+      });
       expect(await kv.get(KV.sessions, sessionId)).toMatchObject({
         id: sessionId,
       });
