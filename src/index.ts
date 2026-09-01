@@ -551,35 +551,15 @@ async function main() {
     config.restPort,
   );
 
-  // #931: a broken or absent embedding runtime previously surfaced only as
-  // a per-observation logger.warn inside vectorIndexAddGuarded, so a corpus
-  // could reach six figures at ~1% vector coverage with no visible signal.
-  // Resolve and warm the provider once at boot and say what happened.
-  //
-  // Fire-and-forget: process.on("SIGINT"/"SIGTERM", shutdown) is not
-  // registered until further down this function; awaiting the probe here
-  // would delay that registration by however long the first embed call
-  // takes. A cold local-model load can mean downloading tens of MB, so on
-  // a slow or rate-limited link that could be a long wait - if a rolling
-  // deploy's SIGTERM lands in that window, there is no shutdown handler
-  // installed yet and the process dies without healthMonitor.stop()/
-  // indexPersistence.save()/sdk.shutdown() running, losing the persisted
-  // search index. Detaching this also means there is no reason to bound it
-  // with a timeout: a slow cold load simply reports later instead of being
-  // killed off and logged as a spurious failure for a provider that would
-  // otherwise have worked.
+  // Deliberately not awaited: the SIGINT/SIGTERM handlers are registered
+  // further down this function, and a cold local-model load can take long
+  // enough to download tens of MB. A deploy signal arriving in that window
+  // would kill the process with no shutdown handler installed, losing the
+  // persisted search index.
   if (!embeddingProvider) {
-    // createEmbeddingProvider() returns null in two cases:
-    // EMBEDDING_PROVIDER=none (a deliberate opt-out) and an unrecognized
-    // value (a typo - createEmbeddingProvider's switch falls to
-    // `default: return null` for anything that isn't a known provider
-    // name). Printing a hardcoded "EMBEDDING_PROVIDER=none" here would
-    // blame the opt-out even when the user never set it, so print the
-    // value actually resolved instead.
-    //
-    // logger.info alongside bootLog: this is a deliberate opt-out (or a
-    // typo), not a failure, so info is the right level - but it still
-    // needs to reach the daemon log, which bootLog alone does not.
+    // Reports the resolved value rather than a hardcoded "none", because
+    // createEmbeddingProvider also returns null for an unrecognized
+    // provider name - blaming the opt-out would misdirect a typo.
     logger.info("Embeddings disabled", {
       provider: embeddingConfig.provider ?? "none",
     });

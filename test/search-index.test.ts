@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SearchIndex } from "../src/state/search-index.js";
 import { segmentCjk } from "../src/state/cjk-segmenter.js";
-import { indexRecords } from "../src/functions/search.js";
+import { indexRecords, getSearchIndex } from "../src/functions/search.js";
 import type { CompressedObservation } from "../src/types.js";
 
 function makeObs(
@@ -318,5 +318,11 @@ describe("indexRecords", () => {
       [],
     );
     expect(indexed).toBe(1);
+    // The count alone passes even if o1 never reached the index, which is
+    // the regression this test exists to catch.
+    expect(getSearchIndex().has("o1")).toBe(true);
+    expect(getSearchIndex().search("Bash").map((r) => r.obsId)).toContain(
+      "o1",
+    );
   });
 });

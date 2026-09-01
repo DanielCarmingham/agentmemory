@@ -50,31 +50,18 @@ export function createEmbeddingProvider(): EmbeddingProvider | null {
   }
 }
 
-// #931-class fix: the worker's boot-time embedding probe (src/index.ts)
-// used to report its result only through `bootLog`, which reaches
-// stderr solely under --verbose (see the comment above `bootLog` in
-// src/logger.ts). A daemon (launchd/systemd) start never sets that, so
-// on a live deployment a broken embedding runtime never printed a
-// single line - the corpus reached 201,102 observations at 1.1% vector
-// coverage before anyone noticed. `logger.info`/`logger.warn` reach the
-// daemon log unconditionally, so this reports through `logger` first,
-// with `bootLog` kept alongside so --verbose still shows it in the
-// compact boot summary the CLI builds from the buffer.
-//
-// Exported (rather than left as an inline .then()/.catch() at the call
-// site in src/index.ts) so tests can call and await it directly - the
-// caller dispatches this fire-and-forget, so there is no other way to
-// observe its settlement from outside.
+// Reports through `logger` rather than `bootLog` alone: bootLog only
+// reaches stderr under --verbose, which a daemon start never sets, so a
+// broken embedding runtime used to print nothing at all. Exported so
+// tests can await it - the caller dispatches it fire-and-forget.
 export async function reportEmbeddingProbeResult(
   embeddingProvider: EmbeddingProvider,
 ): Promise<void> {
   try {
-    // Probe embedBatch, not embed: the indexing path
-    // (vectorIndexAddBatchGuarded in search.ts) calls embedBatch, and a
-    // provider can implement the two differently. Verify the shape too -
-    // the guard drops any vector whose length differs from `dimensions`,
-    // so a wrong-shape provider would pass a bare probe call yet index
-    // nothing.
+    // embedBatch, not embed: that is what the indexing path calls, and a
+    // provider can implement the two differently. The shape check matters
+    // because the guard silently drops wrong-length vectors, so a bad
+    // provider would pass a bare probe yet index nothing.
     const vectors = await embeddingProvider.embedBatch([
       "agentmemory boot probe",
     ]);
