@@ -666,21 +666,12 @@ export function registerApiTriggers(
           body: { error: "sessionId is required and must be a non-empty string" },
         };
       }
-      // #745: Claude Code fires Stop at the end of EVERY assistant turn, not
-      // only at genuine session end, and the Stop hook (src/hooks/stop.ts)
-      // posts here with the same payload shape as the real SessionEnd hook
-      // (src/hooks/session-end.ts). Writing endedAt + status:"completed" on
-      // every one of those posts made every live session look terminated,
-      // which produced phantom "abandoned session" diagnostics. Only the
-      // real SessionEnd hook sends `final: true`, so the terminal write now
-      // fires once, at genuine session end. Strict `=== true` so a
-      // non-boolean value (string, number, truthy object) can't be coerced
-      // into a terminal write.
-      //
-      // Backward compat: an older plugin's SessionEnd hook that predates
-      // this flag sends no `final` and simply never marks the session
-      // completed here -- strictly better than marking it completed every
-      // turn, and self-heals once the plugin updates.
+      // The per-turn Stop hook posts this endpoint with the same payload
+      // shape as the real SessionEnd hook, so only an explicit `final`
+      // marks the session completed. Strict `=== true` keeps a truthy
+      // non-boolean from being coerced into a terminal write. An older
+      // plugin that predates the flag simply never marks completed, which
+      // self-heals on update.
       const final = body.final === true;
       if (final) {
         await kv.update(KV.sessions, sessionId, [
@@ -688,8 +679,7 @@ export function registerApiTriggers(
           { type: "set", path: "status", value: "completed" },
         ]);
       }
-      // Fan out session-stopped lifecycle (non-blocking, unconditional):
-      // summarize, graph extraction, and consolidation must still run on
+      // Unconditional: summarize, graph extraction and consolidation run
       // every turn, not only at genuine session end.
       try {
         sdk.trigger({

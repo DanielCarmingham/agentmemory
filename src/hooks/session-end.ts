@@ -92,9 +92,8 @@ async function main() {
     );
   }
 
-  // #745: mark `final: true` -- this hook fires at genuine session end,
-  // unlike the per-turn Stop hook (stop.ts), which posts the same endpoint
-  // without the flag. Only a `final: true` post marks the session completed.
+  // Genuine session end, unlike the per-turn Stop hook which posts the
+  // same endpoint without the flag.
   fetch(`${REST_URL}/agentmemory/session/end`, {
     method: "POST",
     headers: authHeaders(),
