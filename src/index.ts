@@ -565,21 +565,11 @@ async function main() {
     bootLog(`Auto-forget: enabled (every ${autoForgetIntervalMs / 60000}m)`);
   }
 
-  // mem::evict has always been reachable only from POST /agentmemory/evict,
-  // so a long-lived deployment never enforced maxObservationsPerProject -
-  // a dry run on a 201k-observation store reported 55,716 evictions due
-  // against the 10,000 default. Sweep on the same pattern as auto-forget.
-  //
   // Unlike auto-forget, this sweep can run genuinely long: stale-session
-  // handling (recoverStaleSession in evict.ts) triggers
-  // event::session::stopped per recovered session, which fans out a full
-  // LLM mem::summarize AND mem::graph-extract, plus a corpus-wide
-  // consolidate + crystallize pass once the batch is done. A bare
-  // `try { await ... } catch {}` here would silently absorb both a
-  // mid-sweep timeout (the worker's invocationTimeoutMs is 180s, above)
-  // and any other failure, leaving maxObservationsPerProject unenforced
-  // with zero log lines to show why. Log completion (with the returned
-  // stats and elapsed time) and failure explicitly instead.
+  // recovery fans out a full LLM summarize and graph-extract per recovered
+  // session, plus a corpus-wide consolidate pass. Outcomes are logged
+  // explicitly because a bare try/catch would absorb a mid-sweep timeout
+  // and leave the project cap unenforced with nothing to show why.
   //
   // evictionInFlight guards against two sweeps overlapping: if one pass
   // is still running when the next tick fires (a slow LLM-recovery sweep
